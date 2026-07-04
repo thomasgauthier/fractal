@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+import dspy
 from predict_rlm import RunTrace
 from predict_rlm.trace import extract_trace_from_exc
 
@@ -17,7 +18,6 @@ from .agent.service import (
 )
 from .errors import user_facing_error
 from .events import FractalRuntimeEvent, RuntimeEventTracker
-from .lm_types import RuntimeLM
 from .providers import ProviderSelection
 from .session import (
     INTERRUPTED_ERROR,
@@ -45,6 +45,17 @@ class FractalAgentLike(Protocol):
     def prewarm(self) -> None: ...
 
 
+def _lm_model_label(lm: object | None) -> str | None:
+    if lm is None:
+        return None
+    if isinstance(lm, str):
+        return lm
+    model = getattr(lm, "model", None)
+    if isinstance(model, str) and model:
+        return model
+    return str(lm)
+
+
 class FractalRuntime:
     """Coordinates non-UI Fractal turn execution."""
 
@@ -57,9 +68,10 @@ class FractalRuntime:
         agent: FractalAgentLike,
         provider_selection: ProviderSelection | None = None,
         sub_lm_follows_main: bool = True,
-        lm: str | None = None,
-        sub_lm: str | None = None,
+        lm: dspy.LM | None = None,
+        sub_lm: dspy.LM | None = None,
         sub_model: str | None = None,
+        lm_num_retries: int = 3,
         execution_backend: ExecutionBackendKind = "sbx",
     ) -> None:
         self.workspace_path = Path(workspace_path).resolve()
@@ -72,6 +84,7 @@ class FractalRuntime:
         self.lm = lm
         self.sub_lm = sub_lm
         self.sub_model = sub_model
+        self.lm_num_retries = lm_num_retries
 
     @classmethod
     def create(
@@ -79,8 +92,8 @@ class FractalRuntime:
         *,
         workspace_path: str | Path,
         included_paths: list[str | Path] | None = None,
-        lm: RuntimeLM | None,
-        sub_lm: RuntimeLM | None,
+        lm: dspy.LM,
+        sub_lm: dspy.LM,
         max_iterations: int,
         verbose: bool,
         debug: bool,
@@ -88,6 +101,7 @@ class FractalRuntime:
         provider_selection: ProviderSelection | None = None,
         sub_lm_follows_main: bool = True,
         sub_model: str | None = None,
+        lm_num_retries: int = 3,
         reuse_sandbox: bool = True,
         execution_backend: ExecutionBackendKind = "sbx",
     ) -> "FractalRuntime":
@@ -99,6 +113,7 @@ class FractalRuntime:
             provider_selection=provider_selection,
             sub_lm_follows_main=sub_lm_follows_main,
             sub_model=sub_model,
+            lm_num_retries=lm_num_retries,
             execution_backend=execution_backend,
             agent=FractalAgent(
                 lm=lm,
@@ -141,8 +156,10 @@ class FractalRuntime:
     @property
     def model_label(self) -> str:
         if self.provider_selection is None:
-            lm = getattr(self.agent, "lm", None)
-            return str(lm) if lm is not None else "unconfigured"
+            lm = self.lm
+            if lm is None:
+                lm = getattr(self.agent, "lm", None)
+            return _lm_model_label(lm) or "unconfigured"
         return self.provider_selection.model or "default"
 
     @property
@@ -154,7 +171,7 @@ class FractalRuntime:
         sub_lm = self.sub_lm
         if sub_lm is None:
             sub_lm = getattr(self.agent, "sub_lm", None)
-        return str(sub_lm) if sub_lm is not None else self.model_label
+        return _lm_model_label(sub_lm) or self.model_label
 
     def apply_provider_selection(
         self,
@@ -172,7 +189,9 @@ class FractalRuntime:
             sub_selection = replace(selection, model=sub_model)
         if sub_selection is not None:
             check_provider_readiness(sub_selection)
+        num_retries = self.lm_num_retries
         lm = build_lm(selection)
+        lm.num_retries = num_retries
         setattr(self.agent, "lm", lm)
         self.lm = lm
         if sub_selection is None:
@@ -182,6 +201,7 @@ class FractalRuntime:
             self.sub_model = None
         else:
             sub_lm = build_lm(sub_selection)
+            sub_lm.num_retries = num_retries
             setattr(self.agent, "sub_lm", sub_lm)
             self.sub_lm = sub_lm
             self.sub_lm_follows_main = False

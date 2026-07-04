@@ -603,6 +603,14 @@ def test_runtime_apply_provider_selection_updates_main_and_following_sub_lm(
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-value")
 
+    class FakeLM:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    import dspy
+
+    monkeypatch.setattr(dspy, "LM", FakeLM)
+
     class FakeAgent:
         lm = "old-main"
         sub_lm = "old-main"
@@ -628,8 +636,55 @@ def test_runtime_apply_provider_selection_updates_main_and_following_sub_lm(
 
     assert runtime.provider_label == "openai-api"
     assert runtime.model_label == "gpt-5.4"
-    assert runtime.agent.lm == "openai/gpt-5.4"
-    assert runtime.agent.sub_lm == "openai/gpt-5.4"
+    assert runtime.agent.lm.kwargs == {
+        "model": "openai/gpt-5.4",
+        "api_key": "sk-secret-value",
+    }
+    assert runtime.agent.sub_lm is runtime.agent.lm
+
+
+def test_runtime_apply_provider_selection_preserves_configured_num_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from fractal.providers import ProviderSelection
+    from fractal.runtime import FractalRuntime
+    from fractal.session import FractalSession
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-value")
+
+    class FakeLM:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    import dspy
+
+    monkeypatch.setattr(dspy, "LM", FakeLM)
+
+    class FakeAgent:
+        lm = "old-main"
+        sub_lm = "old-sub"
+
+        async def aforward(self, **kwargs: object) -> object:
+            raise AssertionError("agent should not run")
+
+    runtime = FractalRuntime(
+        workspace_path=tmp_path,
+        session=FractalSession(),
+        agent=FakeAgent(),
+        lm_num_retries=7,
+    )
+    selection = ProviderSelection(
+        provider="openai-api",
+        model="gpt-5.4",
+        api_key_env="OPENAI_API_KEY",
+        auth_source="env",
+    )
+
+    runtime.apply_provider_selection(selection, sub_model="gpt-5.4-mini")
+
+    assert runtime.agent.lm.num_retries == 7
+    assert runtime.agent.sub_lm.num_retries == 7
 
 
 def test_runtime_apply_provider_selection_sets_and_clears_sub_model(
@@ -641,6 +696,14 @@ def test_runtime_apply_provider_selection_sets_and_clears_sub_model(
     from fractal.session import FractalSession
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-value")
+
+    class FakeLM:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    import dspy
+
+    monkeypatch.setattr(dspy, "LM", FakeLM)
 
     class FakeAgent:
         lm = "old-main"
@@ -664,8 +727,14 @@ def test_runtime_apply_provider_selection_sets_and_clears_sub_model(
 
     runtime.apply_provider_selection(selection, sub_model="gpt-5.4-mini")
 
-    assert runtime.agent.lm == "openai/gpt-5.4"
-    assert runtime.agent.sub_lm == "openai/gpt-5.4-mini"
+    assert runtime.agent.lm.kwargs == {
+        "model": "openai/gpt-5.4",
+        "api_key": "sk-secret-value",
+    }
+    assert runtime.agent.sub_lm.kwargs == {
+        "model": "openai/gpt-5.4-mini",
+        "api_key": "sk-secret-value",
+    }
     assert runtime.sub_lm_follows_main is False
     assert runtime.sub_model_label == "gpt-5.4-mini"
 
