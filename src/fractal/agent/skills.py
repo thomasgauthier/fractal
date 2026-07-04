@@ -52,7 +52,7 @@ specific included project roots. Avoid broad recursive Python walks like
 `Path(root).rglob("*.py")` unless you must inspect filesystem metadata. If you
 do walk manually, skip dependency, cache, VCS, sandbox, and session directories:
 `.git`, `.venv`, `node_modules`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`,
-`.predict_rlm_sbx`, and `.fractal`.
+`.predict_rlm_sbx`, `.predict_rlm_runner_env`, and `.fractal`.
 
 ## Opening & creating files
 

@@ -10,7 +10,7 @@ import warnings
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from predict_rlm import RunTrace
 from pydantic import BaseModel, Field
@@ -194,11 +194,14 @@ class FractalSession:
     def summary(self) -> str:
         return render_session_summary(self.state.summary)
 
-    def session_history_payload(self) -> list[SessionHistoryTurn]:
+    def session_history_payload(self) -> list[dict[str, Any]]:
         # Full traces can be large. The structured summary is the durable
         # compressed trajectory, so history is bounded to exact-recall data.
+        # Keep the RLM boundary JSON-safe: direct execution injects variables by
+        # repr, so custom Pydantic model reprs would require host-only classes in
+        # the runner globals.
         self._enforce_history_limit()
-        return list(self.state.history)
+        return [turn.model_dump(mode="json") for turn in self.state.history]
 
     def add_user_message(self, content: str) -> str:
         turn_id = f"turn-{uuid.uuid4().hex}"

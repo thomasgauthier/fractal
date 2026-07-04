@@ -4,13 +4,17 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from predict_rlm import RunTrace
 from predict_rlm.trace import extract_trace_from_exc
 
 from .agent.schema import FractalIterationEvent, FractalResult
-from .agent.service import FractalAgent, create_sbx_interpreter
+from .agent.service import (
+    ExecutionBackendKind,
+    FractalAgent,
+    create_execution_interpreter,
+)
 from .errors import user_facing_error
 from .events import FractalRuntimeEvent, RuntimeEventTracker
 from .lm_types import RuntimeLM
@@ -19,7 +23,6 @@ from .session import (
     INTERRUPTED_ERROR,
     MAX_ITERATIONS_ERROR,
     FractalSession,
-    SessionHistoryTurn,
     SummaryTurn,
     session_path,
 )
@@ -31,7 +34,7 @@ class FractalAgentLike(Protocol):
         workspace_path: str | Path,
         user_message: str,
         rendered_session_summary: str = "",
-        session_history: list[SessionHistoryTurn] | None = None,
+        session_history: list[dict[str, Any]] | None = None,
         included_paths: list[Path] | None = None,
         on_runtime_event: Callable[[object], object] | None = None,
         on_iteration_event: Callable[[FractalIterationEvent], object] | None = None,
@@ -57,8 +60,10 @@ class FractalRuntime:
         lm: str | None = None,
         sub_lm: str | None = None,
         sub_model: str | None = None,
+        execution_backend: ExecutionBackendKind = "sbx",
     ) -> None:
         self.workspace_path = Path(workspace_path).resolve()
+        self.execution_backend = execution_backend
         self.included_paths = [Path(path).resolve() for path in included_paths or []]
         self.session = session
         self.agent = agent
@@ -84,6 +89,7 @@ class FractalRuntime:
         sub_lm_follows_main: bool = True,
         sub_model: str | None = None,
         reuse_sandbox: bool = True,
+        execution_backend: ExecutionBackendKind = "sbx",
     ) -> "FractalRuntime":
         workspace = Path(workspace_path).resolve()
         runtime = cls(
@@ -93,14 +99,18 @@ class FractalRuntime:
             provider_selection=provider_selection,
             sub_lm_follows_main=sub_lm_follows_main,
             sub_model=sub_model,
+            execution_backend=execution_backend,
             agent=FractalAgent(
                 lm=lm,
                 sub_lm=sub_lm,
                 max_iterations=max_iterations,
                 verbose=verbose,
                 debug=debug,
-                interpreter=create_sbx_interpreter(
-                    workspace, included_paths, reuse=reuse_sandbox
+                interpreter=create_execution_interpreter(
+                    workspace,
+                    included_paths,
+                    backend=execution_backend,
+                    reuse=reuse_sandbox,
                 ),
             ),
             lm=lm,

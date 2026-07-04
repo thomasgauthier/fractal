@@ -8,10 +8,10 @@ from typing import Any
 
 from dspy.adapters.chat_adapter import ChatAdapter
 from dspy.primitives.repl_types import REPLHistory
-from predict_rlm import PredictRLM, Workspace, WorkspaceMode
+from predict_rlm import PredictRLM
 from predict_rlm.skills import docx, pdf, spreadsheet
 
-from fractal.agent.service import load_workspace_instructions
+from fractal.agent.service import build_workspace_inputs, load_workspace_instructions
 from fractal.agent.signature import build_edit_workspace_signature
 from fractal.agent.skills import filesystem_coding_skill
 
@@ -72,13 +72,10 @@ def build_next_context_messages(
     """
 
     workspace_path = Path(getattr(runtime, "workspace_path")).resolve()
-    workspace = Workspace(path=str(workspace_path), mode=WorkspaceMode.DIRECT)
-    if ".fractal" not in workspace.exclude:
-        workspace.exclude = [*workspace.exclude, ".fractal"]
-    included_workspaces = [
-        Workspace(path=str(Path(path).resolve()), mode=WorkspaceMode.DIRECT)
-        for path in getattr(runtime, "included_paths", []) or []
-    ]
+    workspace, included_workspaces = build_workspace_inputs(
+        workspace_path,
+        getattr(runtime, "included_paths", []) or [],
+    )
 
     session = getattr(runtime, "session")
     signature = build_edit_workspace_signature(

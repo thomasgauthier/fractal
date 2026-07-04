@@ -862,6 +862,7 @@ def test_terminal_tui_uses_prompt_toolkit_session_for_live_input(tmp_path: Path)
     assert runtime.submitted == ["fix"]
     assert prompt_session.prompts
     assert prompt_session.prompt_kwargs[0]["wrap_lines"] is True
+    assert prompt_session.prompt_kwargs[0]["set_exception_handler"] is False
     assert "response to fix" in text
 
 

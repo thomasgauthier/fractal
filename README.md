@@ -74,6 +74,10 @@ Fractal is in early alpha and has currently only been tested on macOS.
   > first time. You can pre-pull it once with
   > `sbx create shell /tmp/_warm --name warm --template docker.io/docker/sandbox-templates:shell && sbx rm --force warm`.
   > We've noticed some bugs with SBX on MacOS <= 15, so if you are having trouble with it, updating your MacOS might help. 
+
+If you want raw local execution instead of Docker Sandbox, use
+`--backend direct`. That mode runs on the host and does not require `sbx`.
+
 - **A model provider.** One of the providers in the
   [configuration table](#configuration), with its API key available (or
   `codex login` for `openai-codex`, or a local Ollama server). Setup walks you
@@ -332,6 +336,7 @@ that's what the sandbox sees and what the agent reads and edits.
 | `--verbose` | Show generated code and model-visible output for each RLM iteration; enabled by default with `-p`. |
 | `--quiet` | Suppress progress chatter (non-interactive runs). |
 | `--debug` | Enable PredictRLM debug mode. |
+| `--backend {sbx,direct}` | Choose the execution backend; `direct` runs locally on the host instead of Docker Sandbox. |
 
 Subcommands: `fractal config <show|status|setup|get|set|unset|reset>` manage
 configuration (see [Configuration](#configuration)).

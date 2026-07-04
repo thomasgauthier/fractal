@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 import dspy
 from predict_rlm import Workspace
-
-from fractal.session import SessionHistoryTurn
 
 BASE_EDIT_WORKSPACE_INSTRUCTIONS = """Act as a focused coding agent over the mounted workspace.
 
@@ -74,20 +74,20 @@ exact prior REPL reasoning, code, outputs, tool calls, or predict calls, inspect
 
         workspace: Workspace = dspy.InputField(
             desc=(
-                "Project workspace path. In direct SBX mode this is a real "
-                "sandbox-visible path that Python subprocesses can use."
+                "Project workspace path. In direct execution mode this is a real "
+                "host path that Python subprocesses can use."
             )
         )
         included_paths: list[Workspace] | None = dspy.InputField(
             desc=(
-                "Additional mounted workspace paths. These are sandbox-visible "
-                "absolute paths in direct SBX mode."
+                "Additional mounted workspace paths. These are visible paths in "
+                "direct execution mode."
             )
         )
         user_message: str = dspy.InputField(
             desc="The user's current request for this turn."
         )
-        session_history: list[SessionHistoryTurn] = dspy.InputField(
+        session_history: list[dict[str, Any]] = dspy.InputField(
             desc=(
                 "Full prior Fractal turn history, including file, command, "
                 "and PredictRLM trace details for exact recall from Python."

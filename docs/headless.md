@@ -42,8 +42,9 @@ echo "summarize recent changes" | fractal -p "review this diff"  # prompt + stdi
   `fractal config setup`, or pin a model inline with `--lm`. Environment
   variables (`FRACTAL_PROVIDER`, `FRACTAL_MODEL`, …) are convenient for CI —
   see [config.md](config.md).
-- The `sbx` CLI must be installed and logged in on the runner, exactly as for
-  interactive use.
+- The `sbx` CLI must be installed and logged in on the runner if you use the
+  default `sbx` backend. For raw local execution, pass `--backend direct` and
+  `sbx` is not required.
 
 ## Usage stats
 

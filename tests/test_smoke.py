@@ -33,6 +33,7 @@ def test_cli_parser_defaults_to_cwd() -> None:
     assert args.sub_lm is None
     assert args.quiet is False
     assert args.verbose is False
+    assert args.backend == "sbx"
     assert args.resume is None
 
 
@@ -93,6 +94,14 @@ def test_cli_parser_accepts_verbose() -> None:
     args = build_parser().parse_args(["--verbose"])
 
     assert args.verbose is True
+
+
+def test_cli_parser_accepts_backend_direct() -> None:
+    from fractal.cli import build_parser
+
+    args = build_parser().parse_args(["--backend", "direct"])
+
+    assert args.backend == "direct"
 
 
 def test_cli_main_dispatches_non_interactive_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -560,6 +569,7 @@ def test_run_tui_shows_shutdown_status_and_closes_runtime(
             verbose=True,
             fresh=False,
             ephemeral=False,
+            backend="sbx",
         )
     )
 
@@ -648,6 +658,7 @@ def test_run_tui_reports_sbx_auth_failure_without_traceback(
             verbose=False,
             fresh=False,
             ephemeral=False,
+            backend="sbx",
         )
     )
 
@@ -733,6 +744,7 @@ def test_run_tui_allows_force_exit_during_shutdown(
             verbose=False,
             fresh=False,
             ephemeral=False,
+            backend="sbx",
         )
     )
 
@@ -750,8 +762,9 @@ def test_signature_fields() -> None:
     if not workspace_available():
         pytest.skip("predict_rlm.Workspace is not exported by the local branch yet")
 
+    from typing import Any
+
     from fractal.agent.signature import build_edit_workspace_signature
-    from fractal.session import SessionHistoryTurn
 
     signature = build_edit_workspace_signature("User: fix tests")
     fields = signature.model_fields
@@ -765,7 +778,7 @@ def test_signature_fields() -> None:
         "changed_files",
     } <= set(fields)
     assert "session_summary" not in fields
-    assert fields["session_history"].annotation == list[SessionHistoryTurn]
+    assert fields["session_history"].annotation == list[dict[str, Any]]
     assert "User: fix tests" in signature.instructions
 
 
@@ -871,7 +884,7 @@ def test_agent_aforward_constructs_rlm_and_workspace(
             tmp_path,
             "update the README",
             rendered_session_summary="previous context",
-            session_history=[history_turn],
+            session_history=[history_turn.model_dump(mode="json")],
             included_paths=[included_path],
         )
     )
@@ -907,7 +920,7 @@ def test_agent_aforward_constructs_rlm_and_workspace(
     assert "mount_path" not in included_paths[0].model_fields_set
     assert included_paths[0].mode is service.WorkspaceMode.DIRECT
     assert acall_kwargs["user_message"] == "update the README"
-    assert acall_kwargs["session_history"] == [history_turn]
+    assert acall_kwargs["session_history"] == [history_turn.model_dump(mode="json")]
     assert result.changed_files == ["README.md"]
 
 
@@ -1116,6 +1129,26 @@ def test_agent_prewarm_prewarms_interpreter() -> None:
     agent.prewarm()
 
     interpreter.prewarm.assert_called_once_with()
+
+
+def test_create_execution_interpreter_direct_backend_returns_local_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from fractal.agent.service import FractalDirectBackend, create_execution_interpreter
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("FRACTAL_STATE_HOME", str(tmp_path / "state"))
+    interpreter = create_execution_interpreter(workspace, backend="direct")
+
+    try:
+        assert isinstance(interpreter, FractalDirectBackend)
+        interpreter.prewarm()
+        assert not (workspace / ".predict_rlm_runner_env").exists()
+        assert str(interpreter.runner_path).startswith(str(tmp_path / "state"))
+    finally:
+        interpreter.shutdown()
 
 
 def test_predict_rlm_sees_absolute_workspace_paths(tmp_path: Path) -> None:

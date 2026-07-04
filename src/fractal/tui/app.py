@@ -799,6 +799,7 @@ class TerminalFractalApp:
                 message = await self.prompt_session.prompt_async(
                     INPUT_PROMPT,
                     handle_sigint=False,
+                    set_exception_handler=False,
                     wrap_lines=True,
                 )
             except (EOFError, KeyboardInterrupt):

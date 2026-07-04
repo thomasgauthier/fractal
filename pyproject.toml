@@ -33,6 +33,9 @@ Issues = "https://github.com/Trampoline-AI/fractal/issues"
 [project.scripts]
 fractal = "fractal.cli:main"
 
+[tool.uv.sources]
+predict-rlm = { git = "https://github.com/thomasgauthier/predict-rlm" }
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

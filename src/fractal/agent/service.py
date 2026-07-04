@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import dspy
 from dspy.utils.callback import BaseCallback
-from predict_rlm import PredictRLM, RunTrace, Workspace, WorkspaceMode
+from predict_rlm import DirectPythonBackend, PredictRLM, RunTrace, Workspace, WorkspaceMode
 from predict_rlm.backends import ExecutionBackend, SbxBackend, SbxConfig
 from predict_rlm.skills import docx, pdf, spreadsheet
 from predict_rlm.workspace import DirectWorkspaceMount
 
 from ..events import build_predict_runtime_hooks
 from ..lm_types import RuntimeLM
-from ..session import SessionHistoryTurn
+from ..session import workspace_state_dir
 from .schema import FractalIterationEvent, FractalResult
 from .signature import build_edit_workspace_signature
 from .skills import filesystem_coding_skill
@@ -25,7 +26,40 @@ class FractalInterpreter(ExecutionBackend, Protocol):
     def prewarm(self) -> None: ...
 
 
+ExecutionBackendKind = Literal["sbx", "direct"]
+
+
+class FractalDirectBackend(DirectPythonBackend):
+    """Local PredictRLM backend that executes directly on the host machine."""
+
+    def __init__(self, *, workdir: str | Path) -> None:
+        self._workdir = Path(workdir).resolve()
+        self._runner_dir = workspace_state_dir(self._workdir) / "direct-runner"
+        super().__init__(
+            workdir=str(self._workdir),
+            runner_path=str(self._runner_dir / "runner.py"),
+        )
+        self.adapter.runner_root = self._runner_dir
+        self.adapter.sandbox_root = self._runner_dir / "sandbox"
+
+    def prewarm(self) -> None:
+        self._ensure_process()
+
+    def configure_direct_workspace_mounts(
+        self,
+        mounts: list[DirectWorkspaceMount],
+    ) -> None:
+        del mounts
+
+    def shutdown(self) -> None:
+        try:
+            super().shutdown()
+        finally:
+            shutil.rmtree(self._runner_dir, ignore_errors=True)
+
+
 _MAX_WORKSPACE_INSTRUCTIONS_CHARS = 20_000
+_WORKSPACE_EXCLUDES = (".fractal", ".predict_rlm_runner_env")
 SBX_CREATE_TIMEOUT_SECONDS = 60.0
 
 
@@ -42,6 +76,21 @@ def load_workspace_instructions(workspace_path: Path) -> str:
             + "\n\n[AGENTS.md truncated — read the full file from the workspace.]"
         )
     return text
+
+
+def build_workspace_inputs(
+    workspace_path: str | Path,
+    included_paths: list[str | Path] | None = None,
+) -> tuple[Workspace, list[Workspace]]:
+    workspace = Workspace(path=str(Path(workspace_path).resolve()), mode=WorkspaceMode.DIRECT)
+    for excluded in _WORKSPACE_EXCLUDES:
+        if excluded not in workspace.exclude:
+            workspace.exclude = [*workspace.exclude, excluded]
+    included_workspaces = [
+        Workspace(path=str(Path(path).resolve()), mode=WorkspaceMode.DIRECT)
+        for path in included_paths or []
+    ]
+    return workspace, included_workspaces
 
 
 class FractalAgent(dspy.Module):
@@ -68,24 +117,15 @@ class FractalAgent(dspy.Module):
         workspace_path: str | Path,
         user_message: str,
         rendered_session_summary: str = "",
-        session_history: list[SessionHistoryTurn] | None = None,
+        session_history: list[dict[str, Any]] | None = None,
         included_paths: list[str | Path] | None = None,
         on_runtime_event: Callable[[object], object] | None = None,
         on_iteration_event: Callable[[FractalIterationEvent], object] | None = None,
     ) -> FractalResult:
-        workspace = Workspace(
-            path=str(Path(workspace_path).resolve()),
-            mode=WorkspaceMode.DIRECT,
+        workspace, included_workspaces = build_workspace_inputs(
+            workspace_path,
+            included_paths,
         )
-        if ".fractal" not in workspace.exclude:
-            workspace.exclude = [*workspace.exclude, ".fractal"]
-        included_workspaces = [
-            Workspace(
-                path=str(Path(path).resolve()),
-                mode=WorkspaceMode.DIRECT,
-            )
-            for path in included_paths or []
-        ]
 
         signature = build_edit_workspace_signature(
             rendered_session_summary,
@@ -156,12 +196,26 @@ def sandbox_name_for(
     return f"fractal-{base[:24]}-{digest}"
 
 
-def create_sbx_interpreter(
+def create_direct_interpreter(
+    workspace_path: str | Path,
+    included_paths: list[str | Path] | None = None,
+) -> FractalDirectBackend:
+    del included_paths
+    # Keep raw mode's working directory on the actual workspace so relative file
+    # paths behave like a normal local shell; the runner's hidden state is
+    # cleaned up separately and excluded from workspace context.
+    return FractalDirectBackend(workdir=Path(workspace_path).resolve())
+
+
+def create_execution_interpreter(
     workspace_path: str | Path,
     included_paths: list[str | Path] | None = None,
     *,
+    backend: ExecutionBackendKind = "sbx",
     reuse: bool = True,
-) -> SbxBackend:
+) -> FractalInterpreter:
+    if backend == "direct":
+        return create_direct_interpreter(workspace_path, included_paths)
     config = (
         SbxConfig(
             name=sandbox_name_for(workspace_path, included_paths),

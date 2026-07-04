@@ -67,6 +67,10 @@ def _effective_verbose(args: argparse.Namespace, lm_config: Any) -> bool:
     return bool(defaults is not None and defaults.verbose)
 
 
+def _reuses_hot_sandbox(args: argparse.Namespace) -> bool:
+    return args.backend == "sbx" and not args.ephemeral
+
+
 def include_path(value: str) -> Path:
     path = Path(value)
     if path.is_symlink():
@@ -120,6 +124,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--debug", action="store_true", help="enable PredictRLM debug mode"
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("sbx", "direct"),
+        default="sbx",
+        help=(
+            "execution backend: sbx uses Docker Sandbox, direct runs code locally "
+            "on the host"
+        ),
     )
     parser.add_argument(
         "--fresh",
@@ -254,11 +267,13 @@ def run_tui(args: argparse.Namespace, notifier: Any | None = None) -> int:
 
     workspace = args.workspace.resolve()
     display_verbose = _effective_verbose(args, lm_config)
-    reuse_sandbox = not args.ephemeral
+    reuse_sandbox = _reuses_hot_sandbox(args)
     status_text = (
-        "[dim]starting sandbox...[/dim]"
-        if args.ephemeral
+        "[dim]starting local runtime...[/dim]"
+        if args.backend == "direct"
         else "[dim]starting sandbox (reusing hot sandbox if available)...[/dim]"
+        if reuse_sandbox
+        else "[dim]starting sandbox...[/dim]"
     )
     runtime = None
     prewarm_complete = False
@@ -280,6 +295,7 @@ def run_tui(args: argparse.Namespace, notifier: Any | None = None) -> int:
             sub_lm_follows_main=lm_config.sub_lm_follows_main,
             sub_model=lm_config.sub_model,
             reuse_sandbox=reuse_sandbox,
+            execution_backend=args.backend,
         )
         with console.status(status_text, spinner="dots"):
             runtime.prewarm()
@@ -305,19 +321,24 @@ def run_tui(args: argparse.Namespace, notifier: Any | None = None) -> int:
         if runtime is not None:
             try:
                 if prewarm_complete:
+                    cleanup = "local runtime" if args.backend == "direct" else "sandbox"
                     with console.status(
-                        "[dim]shutting down sandbox... press Ctrl-C again to force exit without cleaning up the sandbox[/dim]",
+                        f"[dim]shutting down {cleanup}... press Ctrl-C again to force "
+                        f"exit without cleaning up the {cleanup}[/dim]",
                         spinner="dots",
                     ):
                         runtime.close()
                 else:
                     runtime.close()
             except KeyboardInterrupt:
-                console.print(
-                    "sandbox shutdown interrupted; a sandbox may still be running. "
-                    "Run `sbx ls` and `sbx rm --force <name>` to clean it up.",
-                    style="yellow",
-                )
+                if args.backend == "direct":
+                    message = "local runtime shutdown interrupted; a local process may still be running."
+                else:
+                    message = (
+                        "sandbox shutdown interrupted; a sandbox may still be running. "
+                        "Run `sbx ls` and `sbx rm --force <name>` to clean it up."
+                    )
+                console.print(message, style="yellow")
                 return 130
     return 0
 
@@ -374,7 +395,7 @@ def run_non_interactive(
     display_verbose = _effective_verbose(args, lm_config)
     from .runtime import FractalRuntime
 
-    reuse_sandbox = not args.ephemeral
+    reuse_sandbox = _reuses_hot_sandbox(args)
     if args.fresh and reuse_sandbox:
         from .agent.service import remove_sandbox_for
 
@@ -393,6 +414,7 @@ def run_non_interactive(
             sub_lm_follows_main=lm_config.sub_lm_follows_main,
             sub_model=lm_config.sub_model,
             reuse_sandbox=reuse_sandbox,
+            execution_backend=args.backend,
         )
     except Exception as exc:
         error = user_facing_error(exc)
@@ -421,13 +443,17 @@ def run_non_interactive(
         try:
             runtime.close()
         except KeyboardInterrupt:
-            print(
-                "fractal: sandbox shutdown interrupted; a sandbox may still be "
-                "running. Run `sbx ls` and `sbx rm --force <name>` to clean it up.",
-                file=stderr,
-            )
+            if args.backend == "direct":
+                message = "local runtime shutdown interrupted; a local process may still be running."
+            else:
+                message = (
+                    "sandbox shutdown interrupted; a sandbox may still be running. "
+                    "Run `sbx ls` and `sbx rm --force <name>` to clean it up."
+                )
+            print(f"fractal: {message}", file=stderr)
         except Exception as exc:
-            print(f"fractal: sandbox cleanup failed: {exc}", file=stderr)
+            cleanup_label = "sandbox" if args.backend == "sbx" else "local runtime"
+            print(f"fractal: {cleanup_label} cleanup failed: {exc}", file=stderr)
 
 
 def _run_non_interactive_turn(

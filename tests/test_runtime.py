@@ -490,22 +490,24 @@ def test_runtime_create_reuses_one_interpreter_until_close(
     interpreter = object()
     created_with: list[tuple[Path, list[Path]]] = []
 
-    def fake_create_sbx_interpreter(
+    def fake_create_execution_interpreter(
         workspace_path: str | Path,
         included_paths: list[str | Path] | None = None,
         *,
+        backend: str = "sbx",
         reuse: bool = True,
     ) -> object:
         created_with.append((
             Path(workspace_path),
             [Path(path) for path in included_paths or []],
         ))
+        assert backend == "sbx"
         return interpreter
 
     monkeypatch.setattr(
         runtime_module,
-        "create_sbx_interpreter",
-        fake_create_sbx_interpreter,
+        "create_execution_interpreter",
+        fake_create_execution_interpreter,
     )
 
     runtime = FractalRuntime.create(
@@ -519,6 +521,51 @@ def test_runtime_create_reuses_one_interpreter_until_close(
     )
 
     assert created_with == [(tmp_path.resolve(), [included_path])]
+    assert runtime.agent.interpreter is interpreter
+
+
+def test_runtime_create_uses_direct_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from fractal import runtime as runtime_module
+    from fractal.runtime import FractalRuntime
+
+    interpreter = object()
+    created_with: list[tuple[Path, list[Path], str]] = []
+
+    def fake_create_execution_interpreter(
+        workspace_path: str | Path,
+        included_paths: list[str | Path] | None = None,
+        *,
+        backend: str = "sbx",
+        reuse: bool = True,
+    ) -> object:
+        del reuse
+        created_with.append((
+            Path(workspace_path),
+            [Path(path) for path in included_paths or []],
+            backend,
+        ))
+        return interpreter
+
+    monkeypatch.setattr(
+        runtime_module,
+        "create_execution_interpreter",
+        fake_create_execution_interpreter,
+    )
+
+    runtime = FractalRuntime.create(
+        workspace_path=tmp_path,
+        included_paths=None,
+        lm=None,
+        sub_lm=None,
+        max_iterations=1,
+        verbose=False,
+        debug=False,
+        execution_backend="direct",
+    )
+
+    assert created_with == [(tmp_path.resolve(), [], "direct")]
     assert runtime.agent.interpreter is interpreter
 
 
